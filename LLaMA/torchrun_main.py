@@ -1,4 +1,5 @@
 import os
+import contextlib
 import inspect
 import sys
 import math
@@ -486,10 +487,17 @@ def main(args):
             labels = batch["input_ids"].clone()
             labels[labels == pad_idx] = -100
             tokens_seen += (batch["input_ids"] != pad_idx).sum().item() * world_size
-            loss = model(**batch, labels=labels).loss
-            loss_temp = loss.detach().clone()
-            scaled_loss = loss / args.gradient_accumulation
-            scaled_loss.backward()
+            is_accumulating = (global_step % args.gradient_accumulation != 0)
+            sync_context = (
+                model.no_sync()
+                if (is_accumulating and hasattr(model, "no_sync"))
+                else contextlib.nullcontext()
+            )
+            with sync_context:
+                loss = model(**batch, labels=labels).loss
+                loss_temp = loss.detach().clone()
+                scaled_loss = loss / args.gradient_accumulation
+                scaled_loss.backward()
             
         except Exception as e:
             consecutive_data_errors += 1
@@ -509,7 +517,7 @@ def main(args):
                 logger.error(f"Critical error or too many consecutive data errors: {e}")
                 raise e
                 
-        if global_step % args.gradient_accumulation != 0:
+        if is_accumulating:
             continue
             
         # Gradient clipping
