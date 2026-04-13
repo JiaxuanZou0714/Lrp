@@ -1,11 +1,11 @@
 #!/bin/bash
-# New_Optimizer 60M Model Training
+# New_Optimizer2 60M Model Training
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 exec "$SCRIPT_DIR/train_universal.sh" \
     --model_size 60m \
-    --optimizer new_optimizer \
+    --optimizer new_optimizer2 \
     --num_gpus 4 \
     --lr_matrix 0.005 \
     --lr_adam 0.005 \

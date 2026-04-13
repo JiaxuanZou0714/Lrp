@@ -74,10 +74,10 @@ def parse_args(args):
     parser.add_argument("--wandb_name", type=str, default='muon_rmnp_training')
     parser.add_argument("--target_eval_tokens", type=int, default=10_000_000)
     parser.add_argument("--save_every", type=int, default=10000)
-    parser.add_argument("--continue_from", type=str, default=None) 
-    
-    # Optimizer selection: muon, RMNP, shampoo, soap
-    parser.add_argument("--optimizer", type=str, default="muon", choices=["muon", "RMNP", "shampoo", "soap", "new_optimizer"])
+    parser.add_argument("--continue_from", type=str, default=None)
+
+    # Optimizer selection: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2
+    parser.add_argument("--optimizer", type=str, default="muon", choices=["muon", "RMNP", "shampoo", "soap", "new_optimizer", "new_optimizer2"])
     parser.add_argument("--precondition_frequency", type=int, default=10, help="Preconditioner update frequency (SOAP only)")
 
     parser.add_argument("--gradient_accumulation", type=int, default=None)
@@ -106,7 +106,7 @@ def parse_args(args):
 @torch.no_grad()
 def evaluate_model(model, preprocess_batched, pad_idx, global_rank, world_size, device, batch_size, target_eval_tokens, local_data_dir=None):
     _time = time.time()
-    
+
     if local_data_dir is not None:
         val_data = datasets.load_from_disk(os.path.join(local_data_dir, "validation"))
         val_data = val_data.to_iterable_dataset()
@@ -136,25 +136,25 @@ def evaluate_model(model, preprocess_batched, pad_idx, global_rank, world_size, 
             break
         total_batches += 1
 
-        batch = {k: v.to(device) for k, v in batch.items()} 
-        labels = batch["input_ids"].clone() 
+        batch = {k: v.to(device) for k, v in batch.items()}
+        labels = batch["input_ids"].clone()
         labels[labels == pad_idx] = -100
-        loss = model(**batch, labels=labels).loss 
-        total_loss += loss.detach() 
+        loss = model(**batch, labels=labels).loss
+        total_loss += loss.detach()
 
-        evaluated_on_tokens += (batch["input_ids"] != pad_idx).sum().item() * world_size 
+        evaluated_on_tokens += (batch["input_ids"] != pad_idx).sum().item() * world_size
 
     if total_batches > 0:
         total_loss = total_loss / total_batches
 
     # Only gather if distributed
     if world_size > 1:
-        gathered_losses = [torch.zeros_like(total_loss) for _ in range(world_size)] 
-        dist.all_gather(gathered_losses, total_loss) 
+        gathered_losses = [torch.zeros_like(total_loss) for _ in range(world_size)]
+        dist.all_gather(gathered_losses, total_loss)
         total_loss = sum([t.item() for t in gathered_losses]) / world_size
     else:
         total_loss = total_loss.item()
-    return total_loss, evaluated_on_tokens 
+    return total_loss, evaluated_on_tokens
 
 
 def main(args):
@@ -195,15 +195,15 @@ def main(args):
 
     assert args.gradient_accumulation * args.batch_size * world_size == args.total_batch_size, \
         "gradient_accumulation * batch_size * world_size must be equal to total_batch_size"
-    
+
     # turn off logger
     if global_rank != 0: logger.remove()
-            
+
     # initialize wandb without config (it is passed later)
     if global_rank == 0:
         wandb_project = os.environ.get('WANDB_PROJECT', 'llama-pretraining')
         wandb.init(project=wandb_project, name=args.wandb_name)
-        
+
     logger.info(f"Using dist with rank {global_rank} (only rank 0 will log)")
     logger.info("*" * 40)
     logger.info(f"Starting training with the arguments")
@@ -273,7 +273,7 @@ def main(args):
 
     base_model = model.module if hasattr(model, "module") else model
     n_total_params = sum(p.numel() for p in base_model.parameters())
-    
+
     # Initialize wandb config
     run_config = dict(vars(args))
     run_config.update({
@@ -289,7 +289,7 @@ def main(args):
         wandb.config.update(run_config, allow_val_change=True)
         wandb.save(os.path.abspath(__file__), policy="now")
         pbar = tqdm(total=args.num_training_steps - update_step, desc="Update steps", ncols=80)
-    
+
     logger.info(f"\n{model}\n")
     logger.info(f"Total params: {sum(p.numel() for p in base_model.parameters()) / 1_000_000:.2f}M")
     logger.info(f"Trainable params: {sum(p.numel() for p in base_model.parameters() if p.requires_grad) / 1_000_000:.2f}M")
@@ -345,9 +345,21 @@ def main(args):
             momentum=0.95,
             weight_decay=args.weight_decay
         )
+    elif args.optimizer.lower() == "new_optimizer2":
+        from optimizers.new_optimizer2 import get_new_optimizer
+        if args.lr_matrix is None or args.lr_adam is None:
+            raise ValueError("new_optimizer2 requires both --lr_matrix and --lr_adam to be specified")
+        optimizer = get_new_optimizer(
+            base_model,
+            lr_rmnp=args.lr_matrix,
+            lr_adam=args.lr_adam,
+            r=args.r,
+            momentum=0.95,
+            weight_decay=args.weight_decay
+        )
     else:
-        raise ValueError(f"Optimizer {args.optimizer} not supported. Choose from: muon, RMNP, shampoo, soap")
-    
+        raise ValueError(f"Optimizer {args.optimizer} not supported. Choose from: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2")
+
     print('*********************************')
     print(f"Using optimizer: {args.optimizer}")
     print(optimizer)
@@ -363,7 +375,7 @@ def main(args):
     # Load optimizer and scheduler state if continuing from checkpoint
     if args.continue_from is not None:
         optimizer_path = os.path.join(args.continue_from, "optimizer.pt")
-        
+
         if os.path.exists(optimizer_path):
             logger.info(f"Loading optimizer state from {optimizer_path}")
             checkpoint = torch.load(optimizer_path, map_location=device)
@@ -371,7 +383,7 @@ def main(args):
                 optimizer.load_state_dict(checkpoint['optimizer'])
             else:
                 optimizer.load_state_dict(checkpoint)
-                
+
             if 'scheduler' in checkpoint:
                 scheduler.load_state_dict(checkpoint['scheduler'])
         else:
@@ -444,7 +456,7 @@ def main(args):
     pad_idx = tokenizer.pad_token_id
     update_time = time.time()
     local_step = 0
-    
+
     step_times = []
     consecutive_data_errors = 0
     max_data_errors = 25  # Maximum consecutive data loading errors before giving up
@@ -478,11 +490,11 @@ def main(args):
             global_step += 1
             local_step += 1
             consecutive_data_errors = 0
-            
+
             # Time first 10 steps
             if global_step <= 10:
                 start_time = time.time()
-                
+
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
             labels = batch["input_ids"].clone()
             labels[labels == pad_idx] = -100
@@ -498,47 +510,47 @@ def main(args):
                 loss_temp = loss.detach().clone()
                 scaled_loss = loss / args.gradient_accumulation
                 scaled_loss.backward()
-            
+
         except Exception as e:
             consecutive_data_errors += 1
             error_msg = str(e).lower()
             is_data_error = any(error_keyword in error_msg for error_keyword in data_errors)
-            
+
             if is_data_error and consecutive_data_errors <= max_data_errors:
                 logger.warning(f"Data loading error (attempt {consecutive_data_errors}/{max_data_errors}): {e}")
                 logger.info("Skipping this batch and continuing...")
-                
+
                 global_step -= 1
                 local_step -= 1
-                
+
                 time.sleep(min(consecutive_data_errors * 1.0, 10.0))
                 continue
             else:
                 logger.error(f"Critical error or too many consecutive data errors: {e}")
                 raise e
-                
+
         if is_accumulating:
             continue
-            
+
         # Gradient clipping
         if args.grad_clipping != 0.0:
             model_params = [p for p in model.parameters() if p.grad is not None]
             torch.nn.utils.clip_grad_norm_(model_params, args.grad_clipping)
-            
+
         if global_rank == 0:
             pbar.update(1)
-            
+
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
         update_step += 1
-        
+
         # Time first 10 steps
         if global_step <= 10:
             step_time = time.time() - start_time
             step_times.append(step_time)
             logger.info(f"Step {global_step} time: {step_time:.2f} seconds")
-            
+
         # Save checkpoint
         if local_step > args.gradient_accumulation and update_step % args.save_every == 0 and global_rank == 0:
             current_model_directory = f"{args.save_dir}/model_{update_step}"
@@ -548,7 +560,7 @@ def main(args):
             if getattr(model_to_save, 'generation_config', None) is not None:
                 model_to_save.generation_config.pad_token_id = 0
             model_to_save.save_pretrained(current_model_directory, max_shard_size='100GB', safe_serialization=False)
-            
+
             optimizer_checkpoint = {
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
@@ -559,7 +571,7 @@ def main(args):
                 "dtype": args.dtype,
             }
             torch.save(optimizer_checkpoint, f"{current_model_directory}/optimizer.pt")
-            
+
             training_state_checkpoint = {
                 "global_step": global_step,
                 "update_step": update_step,
@@ -569,7 +581,7 @@ def main(args):
             }
             with open(f"{current_model_directory}/training_state.json", "w") as f:
                 json.dump(training_state_checkpoint, f, indent=4)
-            
+
         # Evaluation
         if update_step % args.eval_every == 0:
             logger.info(f"Performing evaluation at step {update_step}")
@@ -585,14 +597,14 @@ def main(args):
                     step=update_step,
                 )
             logger.info(f"Eval loss at step {update_step}: {total_loss}")
-            
+
         # Logging
         lr = optimizer.param_groups[0]["lr"]
         tokens_in_update = tokens_seen - tokens_seen_before
         tokens_seen_before = tokens_seen
         batches_in_update = args.gradient_accumulation * world_size
         elapsed = time.time() - update_time
-        
+
         if global_rank == 0:
             log_dict = {
                 "loss": loss_temp.item(),
@@ -605,13 +617,13 @@ def main(args):
                 "throughput_batches": batches_in_update / elapsed,
             }
             wandb.log(log_dict, step=update_step)
-            
+
         update_time = time.time()
-        
+
         # Early termination
         if update_step >= args.num_training_steps:
             break
-    
+
     # Training finished
     if global_rank == 0 and len(step_times) > 0:
         avg_time = np.mean(step_times)

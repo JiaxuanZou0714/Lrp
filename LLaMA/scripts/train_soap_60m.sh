@@ -1,7 +1,6 @@
 #!/bin/bash
 # SOAP 60M Model Training
 
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-4,5,6,7}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 exec "$SCRIPT_DIR/train_universal.sh" \
