@@ -59,8 +59,8 @@ class new_optimizer(torch.optim.Optimizer):
                     
                     p.data.add_(update_direction, alpha=-lr)
                     
-                    new_row_norms = torch.norm(p.data, p=2, dim=-1, keepdim=True)
-                    p.data.mul_(old_row_norms / (new_row_norms + eps))
+                    #new_row_norms = torch.norm(p.data, p=2, dim=-1, keepdim=True)
+                    #p.data.mul_(old_row_norms / (new_row_norms + eps))
                     
                     param_state['momentum_buffer'] = buf
                     
