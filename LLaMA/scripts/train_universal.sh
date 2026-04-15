@@ -47,7 +47,7 @@ Usage: $0 [OPTIONS]
 
 Required parameters:
   --model_size    Model size: 60m, 130m, 350m, 1b
-    --optimizer     Optimizer: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2
+        --optimizer     Optimizer: muon, RMNP, shampoo, soap, new_optimizer, NORA, mano
 
 Hardware:
   --num_gpus      Number of GPUs (default: 4). Gradient accumulation is
@@ -172,8 +172,8 @@ if [[ ! "$MODEL_SIZE" =~ ^(60m|130m|135m|350m|1b)$ ]]; then
     exit 1
 fi
 
-if [[ ! "$OPTIMIZER" =~ ^(muon|RMNP|shampoo|soap|new_optimizer|new_optimizer2)$ ]]; then
-    echo "Error: --optimizer must be one of: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2"
+if [[ ! "$OPTIMIZER" =~ ^(muon|RMNP|shampoo|soap|new_optimizer|NORA|mano)$ ]]; then
+    echo "Error: --optimizer must be one of: muon, RMNP, shampoo, soap, new_optimizer, NORA, mano"
     exit 1
 fi
 
@@ -213,14 +213,14 @@ esac
 # Generate WandB name if not provided
 if [[ -z "$WANDB_NAME" ]]; then
     WANDB_NAME="llama-${MODEL_SIZE}-${OPTIMIZER}-lr${LEARNING_RATE}"
-    if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "new_optimizer2" ]]; then
+    if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "NORA" || "$OPTIMIZER" == "mano" ]]; then
         WANDB_NAME="llama-${MODEL_SIZE}-${OPTIMIZER}-matrix${LR_MATRIX}-adam${LR_ADAM}"
     fi
 fi
 
 # Update save directory with complete information
 SAVE_DIR="$PROJECT_DIR/checkpoints/llama_${MODEL_SIZE}-${TIMESTAMP}-${OPTIMIZER}"
-if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "new_optimizer2" ]]; then
+if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "NORA" || "$OPTIMIZER" == "mano" ]]; then
     SAVE_DIR="$PROJECT_DIR/checkpoints/llama_${MODEL_SIZE}-${TIMESTAMP}-${OPTIMIZER}-matrix${LR_MATRIX}-adam${LR_ADAM}"
 else
     SAVE_DIR="$PROJECT_DIR/checkpoints/llama_${MODEL_SIZE}-${TIMESTAMP}-${OPTIMIZER}-lr${LEARNING_RATE}"
@@ -234,7 +234,7 @@ echo "Model Size: $MODEL_SIZE"
 echo "Optimizer: $OPTIMIZER"
 echo "Num GPUs: $NUM_GPUS"
 echo "Learning Rate: $LEARNING_RATE"
-if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "new_optimizer2" ]]; then
+if [[ "$OPTIMIZER" == "RMNP" || "$OPTIMIZER" == "shampoo" || "$OPTIMIZER" == "soap" || "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "NORA" || "$OPTIMIZER" == "mano" ]]; then
     echo "Matrix LR: $LR_MATRIX"
     echo "Adam LR: $LR_ADAM"
 fi
@@ -283,7 +283,7 @@ if [[ -n "$LR_ADAM" ]]; then
     ARGS+=(--lr_adam "$LR_ADAM")
 fi
 
-if [[ "$OPTIMIZER" == "new_optimizer" ]]; then
+if [[ "$OPTIMIZER" == "new_optimizer" || "$OPTIMIZER" == "NORA" || "$OPTIMIZER" == "mano" ]]; then
     ARGS+=(--r "$R_VAL")
 fi
 

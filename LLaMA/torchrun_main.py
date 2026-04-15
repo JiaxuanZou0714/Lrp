@@ -76,8 +76,8 @@ def parse_args(args):
     parser.add_argument("--save_every", type=int, default=10000)
     parser.add_argument("--continue_from", type=str, default=None)
 
-    # Optimizer selection: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2
-    parser.add_argument("--optimizer", type=str, default="muon", choices=["muon", "RMNP", "shampoo", "soap", "new_optimizer", "new_optimizer2"])
+    # Optimizer selection: muon, RMNP, shampoo, soap, new_optimizer, NORA, mano
+    parser.add_argument("--optimizer", type=str, default="muon", choices=["muon", "RMNP", "shampoo", "soap", "new_optimizer", "NORA", "mano"])
     parser.add_argument("--precondition_frequency", type=int, default=10, help="Preconditioner update frequency (SOAP only)")
 
     parser.add_argument("--gradient_accumulation", type=int, default=None)
@@ -96,7 +96,7 @@ def parse_args(args):
     parser.add_argument("--grad_clipping", type=float, default=0.0)
     parser.add_argument("--single_cuda", default=False, action="store_true")
     parser.add_argument("--use_hf_model", default=False, action="store_true")
-    parser.add_argument("--r", type=float, default=1.833, help="The r value for L_{r, \\infty} norm in New_Optimizer (default: 1.833)")
+    parser.add_argument("--r", type=float, default=1.833, help="The r value for NORA (default: 1.833)")
     parser.add_argument("--local_data_dir", type=str, default=os.path.join(os.path.dirname(__file__), "c4_local"), help="Path to pre-downloaded local dataset")
     args = parser.parse_args(args)
     args = args_utils.check_args_torchrun_main(args)
@@ -345,10 +345,22 @@ def main(args):
             momentum=0.95,
             weight_decay=args.weight_decay
         )
-    elif args.optimizer.lower() == "new_optimizer2":
-        from optimizers.new_optimizer2 import get_new_optimizer
+    elif args.optimizer.lower() == "nora":
+        from optimizers.nora import get_nora_optimizer
         if args.lr_matrix is None or args.lr_adam is None:
-            raise ValueError("new_optimizer2 requires both --lr_matrix and --lr_adam to be specified")
+            raise ValueError("NORA requires both --lr_matrix and --lr_adam to be specified")
+        optimizer = get_nora_optimizer(
+            base_model,
+            lr_rmnp=args.lr_matrix,
+            lr_adam=args.lr_adam,
+            r=args.r,
+            momentum=0.95,
+            weight_decay=args.weight_decay
+        )
+    elif args.optimizer.lower() == "mano":
+        from optimizers.mano import get_new_optimizer
+        if args.lr_matrix is None or args.lr_adam is None:
+            raise ValueError("mano requires both --lr_matrix and --lr_adam to be specified")
         optimizer = get_new_optimizer(
             base_model,
             lr_rmnp=args.lr_matrix,
@@ -358,7 +370,7 @@ def main(args):
             weight_decay=args.weight_decay
         )
     else:
-        raise ValueError(f"Optimizer {args.optimizer} not supported. Choose from: muon, RMNP, shampoo, soap, new_optimizer, new_optimizer2")
+        raise ValueError(f"Optimizer {args.optimizer} not supported. Choose from: muon, RMNP, shampoo, soap, new_optimizer, NORA, mano")
 
     print('*********************************')
     print(f"Using optimizer: {args.optimizer}")
