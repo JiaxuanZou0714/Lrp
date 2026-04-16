@@ -68,7 +68,9 @@ class new_optimizer(torch.optim.Optimizer):
                     v_hat = F.normalize(v, p=2, dim=dim_k, eps=eps)
                     
                     # 6. 尺度放缩: 0.2 * sqrt(n_k) (对齐 AdamW 的更新幅度)
-                    scale = 0.2 * math.sqrt(n_k)
+                    #scale = 0.2 * math.sqrt(n_k)
+                    #采用RMNP对齐方式
+                    scale = max(1, math.sqrt(grad.size(-2) / grad.size(-1)))
                     update_direction = v_hat * scale
                     
                     # 7. 应用 Weight Decay 和梯度更新
