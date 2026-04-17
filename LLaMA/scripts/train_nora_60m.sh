@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$SCRIPT_DIR/train_universal.sh" \
     --model_size 60m \
     --optimizer NORA \
-    --num_gpus 4 \
+    --num_gpus 2 \
     --lr_matrix 0.005 \
     --lr_adam 0.005 \
     --r 1.9 \

@@ -4,6 +4,9 @@ import torch
 import torch.nn.functional as F
 
 
+LOW_PRECISION_DTYPES = (torch.float16, torch.bfloat16)
+
+
 class NORA(torch.optim.Optimizer):
     """Normalized Orthogonal Row Alignment optimizer for scalable matrix training."""
 
@@ -52,47 +55,63 @@ class NORA(torch.optim.Optimizer):
                 grad = p.grad.data
                 param_state = self.state.setdefault(p, {})
 
+                use_master_param = p.data.dtype in LOW_PRECISION_DTYPES
+                if use_master_param:
+                    if "fp32_param" not in param_state:
+                        param_state["fp32_param"] = p.data.detach().float().clone()
+                    elif param_state["fp32_param"].dtype != torch.float32:
+                        param_state["fp32_param"] = param_state["fp32_param"].float()
+                    param_data = param_state["fp32_param"]
+                    grad_data = grad.float()
+                else:
+                    param_data = p.data
+                    grad_data = grad
+
                 if is_rmnp and grad.dim() >= 2:
                     if "momentum_buffer" not in param_state:
-                        buf = torch.zeros_like(grad)
+                        buf = torch.zeros_like(grad_data)
                     else:
                         buf = param_state["momentum_buffer"]
+                        if use_master_param and buf.dtype != torch.float32:
+                            buf = buf.float()
 
-                    buf.lerp_(grad, 1 - beta)
-                    m_t = grad.lerp(buf, momentum)
+                    buf.lerp_(grad_data, 1 - beta)
+                    m_t = grad_data.lerp(buf, momentum)
 
-                    theta_hat = F.normalize(p.data, p=2, dim=-1, eps=eps)
-                    #p.data
+                    theta_hat = F.normalize(param_data, p=2, dim=-1, eps=eps)
 
                     dot_product = torch.sum(m_t * theta_hat, dim=-1, keepdim=True)
-                    
-                    
                     v = m_t - dot_product * theta_hat
-                    
 
-                    v_hat = F.normalize(v, p=2, dim=-1)
+                    v_hat = F.normalize(v, p=2, dim=-1, eps=eps)
 
-                    scale = max(1, math.sqrt(grad.size(-2) / grad.size(-1)))
+                    scale = max(1, math.sqrt(grad_data.size(-2) / grad_data.size(-1)))
                     update_direction = v_hat * scale
 
                     if weight_decay > 0:
-                        p.data.mul_(1 - lr * weight_decay)
+                        param_data.mul_(1 - lr * weight_decay)
 
-                    p.data.add_(update_direction, alpha=-lr)
+                    param_data.add_(update_direction, alpha=-lr)
+
+                    if use_master_param:
+                        p.data.copy_(param_data.to(dtype=p.data.dtype))
 
                     param_state["momentum_buffer"] = buf
 
                 else:
                     if "exp_avg" not in param_state:
-                        param_state["exp_avg"] = torch.zeros_like(grad)
-                        param_state["exp_avg_sq"] = torch.zeros_like(grad)
+                        param_state["exp_avg"] = torch.zeros_like(grad_data)
+                        param_state["exp_avg_sq"] = torch.zeros_like(grad_data)
                         param_state["step"] = 0
+                    elif use_master_param and param_state["exp_avg"].dtype != torch.float32:
+                        param_state["exp_avg"] = param_state["exp_avg"].float()
+                        param_state["exp_avg_sq"] = param_state["exp_avg_sq"].float()
 
                     exp_avg, exp_avg_sq = param_state["exp_avg"], param_state["exp_avg_sq"]
                     param_state["step"] += 1
 
-                    exp_avg.mul_(betas[0]).add_(grad, alpha=1 - betas[0])
-                    exp_avg_sq.mul_(betas[1]).addcmul_(grad, grad, value=1 - betas[1])
+                    exp_avg.mul_(betas[0]).add_(grad_data, alpha=1 - betas[0])
+                    exp_avg_sq.mul_(betas[1]).addcmul_(grad_data, grad_data, value=1 - betas[1])
 
                     bias_correction1 = 1 - betas[0] ** param_state["step"]
                     bias_correction2 = 1 - betas[1] ** param_state["step"]
@@ -102,9 +121,12 @@ class NORA(torch.optim.Optimizer):
                     adam_update = exp_avg / denom
 
                     if weight_decay > 0:
-                        p.data.mul_(1 - step_size * weight_decay)
+                        param_data.mul_(1 - step_size * weight_decay)
 
-                    p.data.add_(adam_update, alpha=-step_size)
+                    param_data.add_(adam_update, alpha=-step_size)
+
+                    if use_master_param:
+                        p.data.copy_(param_data.to(dtype=p.data.dtype))
 
         return loss
 
