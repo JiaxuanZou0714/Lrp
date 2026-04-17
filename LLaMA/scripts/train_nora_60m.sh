@@ -14,7 +14,7 @@ exec "$SCRIPT_DIR/train_universal.sh" \
     --batch_size 64 \
     --total_batch_size 512 \
     --warmup_steps 1000 \
-    --weight_decay 0.1 \
+    --weight_decay 0.0 \
     --save_every 5000 \
     --eval_every 1000 \
     "$@"
