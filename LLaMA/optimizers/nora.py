@@ -61,12 +61,13 @@ class NORA(torch.optim.Optimizer):
                     buf.lerp_(grad, 1 - beta)
                     m_t = grad.lerp(buf, momentum)
 
-                    theta_hat = p.data
+                    theta_hat = F.normalize(p.data, p=2, dim=-1, eps=eps)
+                    #p.data
 
                     dot_product = torch.sum(m_t * theta_hat, dim=-1, keepdim=True)
-                    theta_norm = torch.sum(theta_hat * theta_hat, dim=-1, keepdim=True)
                     
-                    v = m_t - dot_product * theta_hat/(theta_norm+eps)
+                    
+                    v = m_t - dot_product * theta_hat
                     
 
                     v_hat = F.normalize(v, p=2, dim=-1)
