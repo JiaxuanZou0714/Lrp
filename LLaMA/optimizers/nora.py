@@ -64,7 +64,10 @@ class NORA(torch.optim.Optimizer):
                     theta_hat = p.data
 
                     dot_product = torch.sum(m_t * theta_hat, dim=-1, keepdim=True)
-                    v = m_t - dot_product * theta_hat
+                    theta_norm = torch.sum(theta_hat * theta_hat, dim=-1, keepdim=True)
+                    
+                    v = m_t - dot_product * theta_hat/(theta_norm+eps)
+                    
 
                     v_hat = F.normalize(v, p=2, dim=-1)
 
