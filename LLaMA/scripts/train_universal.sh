@@ -33,6 +33,11 @@ EVAL_EVERY="1000"
 WANDB_PROJECT="${WANDB_PROJECT:-llama-pretraining}"
 WANDB_NAME=""
 R_VAL="1.833"
+LOCAL_DATA_DIR="$PROJECT_DIR/c4_local"
+TOKENIZED_DATA_DIR=""
+TOKENIZER_NAME_OR_PATH="t5-base"
+TOKENIZER_LOCAL_FILES_ONLY="0"
+CONTINUE_FROM=""
 
 # Default save directory with timestamp
 TIMESTAMP=$(date +%Y-%m-%d-%H-%M-%S)
@@ -70,6 +75,12 @@ Logging and checkpointing:
   --save_dir      Directory to save checkpoints (default: auto-generated)
   --wandb_name    WandB run name (default: auto-generated)
   --continue_from Directory to continue training from
+
+Data and tokenizer:
+    --local_data_dir            Path to local raw dataset (default: ./c4_local)
+    --tokenized_data_dir        Path to pre-tokenized dataset (train/validation)
+    --tokenizer_name_or_path    HF tokenizer id or local tokenizer directory
+    --tokenizer_local_files_only  Force tokenizer loading from local files/cache
 
 Examples:
   # Muon 60M model
@@ -153,6 +164,22 @@ while [[ $# -gt 0 ]]; do
         --continue_from)
             CONTINUE_FROM="$2"
             shift 2
+            ;;
+        --local_data_dir)
+            LOCAL_DATA_DIR="$2"
+            shift 2
+            ;;
+        --tokenized_data_dir)
+            TOKENIZED_DATA_DIR="$2"
+            shift 2
+            ;;
+        --tokenizer_name_or_path)
+            TOKENIZER_NAME_OR_PATH="$2"
+            shift 2
+            ;;
+        --tokenizer_local_files_only)
+            TOKENIZER_LOCAL_FILES_ONLY="1"
+            shift 1
             ;;
         --help|-h)
             show_help
@@ -246,6 +273,15 @@ echo "Effective: $NUM_GPUS GPUs x $BATCH_SIZE batch x $GRAD_ACCUM accum = $TOTAL
 echo "Save Directory: $SAVE_DIR"
 echo "WandB Name: $WANDB_NAME"
 echo "Model Config: $MODEL_CONFIG"
+echo "Tokenizer: $TOKENIZER_NAME_OR_PATH"
+if [[ -n "$TOKENIZED_DATA_DIR" ]]; then
+    echo "Tokenized Data Dir: $TOKENIZED_DATA_DIR"
+else
+    echo "Local Data Dir: $LOCAL_DATA_DIR"
+fi
+if [[ "$TOKENIZER_LOCAL_FILES_ONLY" == "1" ]]; then
+    echo "Tokenizer Local Only: true"
+fi
 echo "==========================================="
 
 # Build torchrun command.
@@ -273,7 +309,18 @@ ARGS=(
     --max_length 256
     --scheduler "cosine"
     --grad_clipping 1.0
+    --tokenizer_name_or_path "$TOKENIZER_NAME_OR_PATH"
 )
+
+if [[ -n "$TOKENIZED_DATA_DIR" ]]; then
+    ARGS+=(--tokenized_data_dir "$TOKENIZED_DATA_DIR")
+else
+    ARGS+=(--local_data_dir "$LOCAL_DATA_DIR")
+fi
+
+if [[ "$TOKENIZER_LOCAL_FILES_ONLY" == "1" ]]; then
+    ARGS+=(--tokenizer_local_files_only)
+fi
 
 # Add lr_matrix/lr_adam if specified
 if [[ -n "$LR_MATRIX" ]]; then
@@ -315,6 +362,10 @@ cat > "$SAVE_DIR/training_params.json" << EOF
     "eval_every": $EVAL_EVERY,
     "save_dir": "$SAVE_DIR",
     "wandb_name": "$WANDB_NAME",
+    "local_data_dir": "$LOCAL_DATA_DIR",
+    "tokenized_data_dir": "$TOKENIZED_DATA_DIR",
+    "tokenizer_name_or_path": "$TOKENIZER_NAME_OR_PATH",
+    "tokenizer_local_files_only": "$TOKENIZER_LOCAL_FILES_ONLY",
     "model_config": "$MODEL_CONFIG",
     "timestamp": "$TIMESTAMP"
 }

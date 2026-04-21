@@ -101,6 +101,8 @@ nohup*.out
 .cache/
 *.cache
 c4_local
+c4_tokenized_t5_base
+tokenizers
 
 # IDE
 .vscode/

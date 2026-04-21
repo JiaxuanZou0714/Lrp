@@ -1,13 +1,13 @@
 #!/bin/bash
 # Muon 135M Model Training
 
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-4,5,6,7}
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 exec "$SCRIPT_DIR/train_universal.sh" \
     --model_size 135m \
     --optimizer muon \
-    --num_gpus 4 \
+    --num_gpus 2 \
     --lr_matrix 0.01 \
     --lr_adam 0.001 \
     --num_steps 20000 \

@@ -32,9 +32,6 @@ GPU_PAIR_A="0,1"
 GPU_PAIR_B="2,3"
 
 RUN_SCRIPTS=(
-    "train_shampoo_60m.sh"
-    "train_muon_60m.sh"
-    "train_soap_60m.sh"
     "train_mano_60m.sh"
 )
 

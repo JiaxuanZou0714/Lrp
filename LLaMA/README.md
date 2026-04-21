@@ -92,6 +92,19 @@ python prepare_data.py \
 
 训练时通过 `--local_data_dir ./c4_local` 显式指定，便于复现与迁移。
 
+如果训练速度瓶颈在实时 tokenize，建议先做一次离线预分词：
+
+```bash
+python prepare_tokenized_data.py \
+  --input_data_dir ./c4_local \
+  --output_data_dir ./c4_tokenized_t5_base \
+  --tokenizer_name_or_path t5-base \
+  --max_length 256 \
+  --num_proc 16
+```
+
+训练时可直接使用 `--tokenized_data_dir ./c4_tokenized_t5_base`，从而跳过在线分词。
+
 ## 5. 快速开始
 
 先给脚本执行权限：
@@ -153,7 +166,10 @@ chmod +x scripts/*.sh
   --lr_adam 0.001 \
   --num_steps 20000 \
   --batch_size 64 \
-  --total_batch_size 512
+  --total_batch_size 512 \
+  --tokenized_data_dir ./c4_tokenized_t5_base \
+  --tokenizer_name_or_path t5-base \
+  --tokenizer_local_files_only
 ```
 
 说明：

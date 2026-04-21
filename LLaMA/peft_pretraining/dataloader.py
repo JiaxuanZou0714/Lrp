@@ -1,3 +1,4 @@
+import torch
 from torch.utils.data import IterableDataset
 
 
@@ -36,4 +37,32 @@ class PreprocessedIterableDataset(IterableDataset):
         return {
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"],
+        }
+
+
+class TokenizedIterableDataset(IterableDataset):
+    """Batches pre-tokenized samples already containing input_ids/attention_mask."""
+
+    def __init__(self, data, batch_size):
+        super().__init__()
+        self.data = data
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        iter_data = iter(self.data)
+        batch = []
+
+        for example in iter_data:
+            batch.append(example)
+            if len(batch) == self.batch_size:
+                yield self._collate_batch(batch)
+                batch = []
+
+        if batch:
+            yield self._collate_batch(batch)
+
+    def _collate_batch(self, batch):
+        return {
+            "input_ids": torch.tensor([example["input_ids"] for example in batch], dtype=torch.long),
+            "attention_mask": torch.tensor([example["attention_mask"] for example in batch], dtype=torch.long),
         }

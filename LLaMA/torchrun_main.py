@@ -26,7 +26,7 @@ from tqdm import tqdm
 from loguru import logger
 
 from peft_pretraining import training_utils, args_utils
-from peft_pretraining.dataloader import PreprocessedIterableDataset
+from peft_pretraining.dataloader import PreprocessedIterableDataset, TokenizedIterableDataset
 from peft_pretraining.modeling_llama import LlamaForCausalLM
 
 # Set HuggingFace token from environment variable
@@ -98,16 +98,50 @@ def parse_args(args):
     parser.add_argument("--use_hf_model", default=False, action="store_true")
     parser.add_argument("--r", type=float, default=1.833, help="The r value for NORA (default: 1.833)")
     parser.add_argument("--local_data_dir", type=str, default=os.path.join(os.path.dirname(__file__), "c4_local"), help="Path to pre-downloaded local dataset")
+    parser.add_argument("--tokenized_data_dir", type=str, default=None, help="Path to pre-tokenized dataset with train/validation splits")
+    parser.add_argument("--tokenizer_name_or_path", type=str, default="t5-base", help="Tokenizer HF id or local directory")
+    parser.add_argument("--tokenizer_local_files_only", action="store_true", help="Load tokenizer only from local files/cache")
     args = parser.parse_args(args)
     args = args_utils.check_args_torchrun_main(args)
     return args
 
 
+def build_tokenizer(tokenizer_name_or_path, max_length, local_files_only=False):
+    tokenizer_kwargs = {"model_max_length": max_length}
+    if local_files_only:
+        tokenizer_kwargs["local_files_only"] = True
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, **tokenizer_kwargs)
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token is None:
+            raise ValueError(
+                "Tokenizer has no pad_token_id and no eos_token; please provide a tokenizer with a valid pad token"
+            )
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
 @torch.no_grad()
-def evaluate_model(model, preprocess_batched, pad_idx, global_rank, world_size, device, batch_size, target_eval_tokens, local_data_dir=None):
+def evaluate_model(
+    model,
+    preprocess_batched,
+    pad_idx,
+    global_rank,
+    world_size,
+    device,
+    batch_size,
+    target_eval_tokens,
+    local_data_dir=None,
+    tokenized_data_dir=None,
+):
     _time = time.time()
 
-    if local_data_dir is not None:
+    if tokenized_data_dir is not None:
+        val_data = datasets.load_from_disk(os.path.join(tokenized_data_dir, "validation"))
+        val_data = val_data.to_iterable_dataset()
+        val_data = val_data.shuffle(seed=42, buffer_size=10000)
+        logger.info(f"Loaded tokenized validation dataset from {tokenized_data_dir}/validation")
+    elif local_data_dir is not None:
         val_data = datasets.load_from_disk(os.path.join(local_data_dir, "validation"))
         val_data = val_data.to_iterable_dataset()
         val_data = val_data.shuffle(seed=42, buffer_size=10000)
@@ -119,19 +153,22 @@ def evaluate_model(model, preprocess_batched, pad_idx, global_rank, world_size, 
     if world_size > 1:
         val_data = datasets.distributed.split_dataset_by_node(val_data, rank=global_rank, world_size=world_size)
 
-    val_data_mapped = val_data.map(
-        preprocess_batched,
-        batched=True,
-        remove_columns=["text", "timestamp", "url"],
-    )
-    val_data_mapped.batch = lambda batch_size: training_utils.batch_fn(val_data_mapped, batch_size)
+    if tokenized_data_dir is not None:
+        val_batches = training_utils.batch_fn(val_data, batch_size)
+    else:
+        val_data_mapped = val_data.map(
+            preprocess_batched,
+            batched=True,
+            remove_columns=["text", "timestamp", "url"],
+        )
+        val_batches = training_utils.batch_fn(val_data_mapped, batch_size)
 
     evaluated_on_tokens = 0
     total_loss = torch.tensor(0.0).to(device)
     total_batches = 0
     logger.info(f"Eval set prepared in {time.time() - _time:.2f} seconds")
 
-    for batch in val_data_mapped.batch(batch_size=batch_size):
+    for batch in val_batches:
         if evaluated_on_tokens > target_eval_tokens:
             break
         total_batches += 1
@@ -406,7 +443,12 @@ def main(args):
     seed_for_shuffle = 42
     logger.info(f"Shuffling data with seed {seed_for_shuffle}")
 
-    if args.local_data_dir is not None:
+    if args.tokenized_data_dir is not None:
+        logger.info(f"Loading pre-tokenized dataset from {args.tokenized_data_dir}/train")
+        data = datasets.load_from_disk(os.path.join(args.tokenized_data_dir, "train"))
+        data = data.to_iterable_dataset(num_shards=32)
+        data = data.shuffle(seed=seed_for_shuffle, buffer_size=10000)
+    elif args.local_data_dir is not None:
         logger.info(f"Loading local dataset from {args.local_data_dir}/train")
         data = datasets.load_from_disk(os.path.join(args.local_data_dir, "train"))
         data = data.to_iterable_dataset(num_shards=32)
@@ -420,7 +462,11 @@ def main(args):
             data, rank=global_rank, world_size=world_size,
         )
 
-    tokenizer = AutoTokenizer.from_pretrained("t5-base", model_max_length=args.max_length)
+    tokenizer = build_tokenizer(
+        tokenizer_name_or_path=args.tokenizer_name_or_path,
+        max_length=args.max_length,
+        local_files_only=args.tokenizer_local_files_only,
+    )
 
     def preprocess_batched(batch):
         batch = tokenizer(
@@ -432,15 +478,24 @@ def main(args):
         )
         return batch
 
-    dataset = PreprocessedIterableDataset(
-        data,
-        tokenizer,
-        batch_size=args.batch_size,
-        max_length=args.max_length
-    )
+    if args.tokenized_data_dir is not None:
+        dataset = TokenizedIterableDataset(
+            data,
+            batch_size=args.batch_size,
+        )
+    else:
+        dataset = PreprocessedIterableDataset(
+            data,
+            tokenizer,
+            batch_size=args.batch_size,
+            max_length=args.max_length
+        )
 
     # Restore data loader parallelism after DDP stabilization.
-    requested_workers = 4 if args.local_data_dir is not None else args.workers
+    if args.tokenized_data_dir is not None:
+        requested_workers = args.workers
+    else:
+        requested_workers = 4 if args.local_data_dir is not None else args.workers
     num_workers = requested_workers
     dataset_num_shards = getattr(data, "num_shards", None)
     if dataset_num_shards is None:
@@ -598,7 +653,16 @@ def main(args):
         if update_step % args.eval_every == 0:
             logger.info(f"Performing evaluation at step {update_step}")
             total_loss, evaluated_on_tokens = evaluate_model(
-                model, preprocess_batched, pad_idx, global_rank, world_size, device, args.batch_size, target_eval_tokens=args.target_eval_tokens, local_data_dir=args.local_data_dir
+                model,
+                preprocess_batched,
+                pad_idx,
+                global_rank,
+                world_size,
+                device,
+                args.batch_size,
+                target_eval_tokens=args.target_eval_tokens,
+                local_data_dir=args.local_data_dir,
+                tokenized_data_dir=args.tokenized_data_dir,
             )
             if global_rank == 0:
                 wandb.log({
@@ -685,7 +749,16 @@ def main(args):
     torch.cuda.empty_cache()
 
     total_loss, evaluated_on_tokens = evaluate_model(
-        model, preprocess_batched, pad_idx, global_rank, world_size, device, args.batch_size, target_eval_tokens=args.target_eval_tokens, local_data_dir=args.local_data_dir
+        model,
+        preprocess_batched,
+        pad_idx,
+        global_rank,
+        world_size,
+        device,
+        args.batch_size,
+        target_eval_tokens=args.target_eval_tokens,
+        local_data_dir=args.local_data_dir,
+        tokenized_data_dir=args.tokenized_data_dir,
     )
 
     if global_rank == 0:
